@@ -95,7 +95,7 @@ public class PlanDAO {
     }
 
 
-    private Map<String, Object> getOrDelete(String redisKey, Map<String, Object> resultMap, boolean isDelete) {
+    public Map<String, Object> getOrDelete(String redisKey, Map<String, Object> resultMap, boolean isDelete) {
         Set<String> keys = jedis.keys(redisKey + ":*");
         keys.add(redisKey);
 

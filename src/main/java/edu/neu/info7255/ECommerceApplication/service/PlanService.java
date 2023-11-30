@@ -30,23 +30,29 @@ public class PlanService {
         return planDao.hGet(key, "eTag");
     }
 
-    public String savePlan(String key, String planJsonString) {
-        String newETag =  DigestUtils.md5Hex(planJsonString);
-        planDao.hSet(key, key, planJsonString);
-        planDao.hSet(key, "eTag", newETag);
-        return newETag;
-    }
-
-    // public String savePlan(String key, JSONObject planJson) {
-    //     String newETag =  DigestUtils.md5Hex(planJson.toString());
-    //     jsonToMap(planJson);
+    // public String savePlan(String key, String planJsonString) {
+    //     String newETag =  DigestUtils.md5Hex(planJsonString);
+    //     planDao.hSet(key, key, planJsonString);
     //     planDao.hSet(key, "eTag", newETag);
     //     return newETag;
     // }
 
-    public JSONObject getPlan(String key) {
-        String planString = planDao.hGet(key, key);
-        return new JSONObject(planString);
+    public String savePlan(String key, JSONObject planJson) {
+        String newETag =  DigestUtils.md5Hex(planJson.toString());
+        jsonToMap(planJson);
+        planDao.hSet(key, "eTag", newETag);
+        return newETag;
+    }
+
+    // public JSONObject getPlan(String key) {
+    //     String planString = planDao.hGet(key, key);
+    //     return new JSONObject(planString);
+    // }
+
+    public Map<String, Object> getPlan(String key) {
+        Map<String, Object> result = new HashMap<>();
+        getOrDelete(key, result, false);
+        return result;
     }
 
     public boolean deletePlan(String key) {
@@ -78,12 +84,12 @@ public class PlanService {
         return newETag;
     }
 
-    // public Map<String, Map<String, Object>> jsonToMap(JSONObject jsonObject) {
-    //      return planDao.jsonToMap(jsonObject);
-    // }
+    public Map<String, Map<String, Object>> jsonToMap(JSONObject jsonObject) {
+         return planDao.jsonToMap(jsonObject);
+    }
 
-    // private Map<String, Object> getOrDelete(String redisKey, Map<String, Object> resultMap, boolean isDelete) {
-    //     return planDao.getOrDelete(redisKey, resultMap, isDelete);
-    // }
+    private Map<String, Object> getOrDelete(String redisKey, Map<String, Object> resultMap, boolean isDelete) {
+        return planDao.getOrDelete(redisKey, resultMap, isDelete);
+    }
     
 }

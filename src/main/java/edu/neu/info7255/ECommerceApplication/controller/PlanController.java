@@ -3,9 +3,12 @@ package edu.neu.info7255.ECommerceApplication.controller;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.everit.json.schema.ValidationException;
 import org.json.JSONObject;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -20,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import edu.neu.info7255.ECommerceApplication.ECommerceApplication;
 import edu.neu.info7255.ECommerceApplication.service.AuthService;
 import edu.neu.info7255.ECommerceApplication.service.PlanService;
 import edu.neu.info7255.ECommerceApplication.validator.JsonValidator;
@@ -30,13 +34,18 @@ public class PlanController {
     
     private final JsonValidator jsonValidator;
     private final PlanService planService;
+    private final RabbitTemplate template;
+
     @Autowired
     private AuthService authService;
 
+
+
     @Autowired
-    public PlanController(JsonValidator jsonValidator, PlanService planService) {
+    public PlanController(JsonValidator jsonValidator, PlanService planService, RabbitTemplate template) {
         this.jsonValidator = jsonValidator;
         this.planService = planService;
+        this.template = template;
     }
 
     @PostMapping
@@ -68,10 +77,24 @@ public class PlanController {
         }
 
         //Creates ETAG for Plan
-        String eTag = planService.savePlan(planKey, planJson.toString());
+        // String eTag = planService.savePlan(planKey, planJson.toString());// From demo2
+        String eTag = planService.savePlan(planKey, planJson);
+
+        // Send a message to queue for indexing
+        Map<String, String> message = new HashMap<>();
+        message.put("operation", "SAVE");
+        message.put("body", planString);
+
+        System.out.println("Sending message: " + message);
+        template.convertAndSend(ECommerceApplication.queueName, message);
+
+        HttpHeaders headersToSend = new HttpHeaders();
+        headersToSend.setETag(eTag);
         
-        return ResponseEntity.created(new URI("/plan/" + planJson.get("objectId").toString())).eTag(eTag).body(new JSONObject().put("message", "plan created successfully!")
-                .put("planId", planJson.get("objectId").toString()).toString());
+        // return ResponseEntity.created(new URI("/plan/" + planJson.get("objectId").toString())).eTag(eTag).body(new JSONObject().put("message", "plan created successfully!")
+        //         .put("planId", planJson.get("objectId").toString()).toString()); // From demo2
+
+        return new ResponseEntity<>("{\"objectId\": \"" + planJson.getString("objectId") + "\"}", headersToSend, HttpStatus.CREATED);
 
     }
 
@@ -87,11 +110,13 @@ public class PlanController {
             return new ResponseEntity<>(new JSONObject().put("message", "Invalid Token").toString(),HttpStatus.UNAUTHORIZED);
         }
 
+        //Check if plan exist
         String key = "plan_" + planId;
         if (!planService.checkIfKeyExists(key)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new JSONObject().put("error", "plan not found!").toString());
         }
 
+        // Verify ETag
         String oldETag = planService.getETag(key);
         String receivedETag = headers.getFirst("If-None-Match");
         if (receivedETag != null && receivedETag.equals(oldETag)) {
@@ -99,31 +124,64 @@ public class PlanController {
                     .body(new JSONObject().put("message", "plan not modified!").toString());
         }
 
-        String plan = planService.getPlan(key).toString();
-        return ResponseEntity.ok().eTag(oldETag).body(plan);
+        //Get Plan
+        // String plan = planService.getPlan(key).toString();// From demo2
+        // return ResponseEntity.ok().eTag(oldETag).body(plan);// From demo2
+
+        HttpHeaders headersToSend = new HttpHeaders();
+        headersToSend.setETag(oldETag);
+
+        Map<String, Object> objectToReturn = planService.getPlan(key);
+        // if (objectType.equals("plan"))
+            return new ResponseEntity<>(objectToReturn, headersToSend, HttpStatus.OK);
+
+        // return new ResponseEntity<>(objectToReturn, HttpStatus.OK);// From demo2
+        
     }
 
     @DeleteMapping(value = "/{planId}", produces = "application/json")
-    public ResponseEntity<Object> deletePlan(@PathVariable String planId, @RequestHeader("Authorization") String idToken) {
+    public ResponseEntity<Object> deletePlan(@PathVariable String planId, @RequestHeader HttpHeaders headers, @RequestHeader("Authorization") String idToken) {
 
          // Checks for the Authorization
         if(!authService.authorize(idToken.substring(7))) {
             return new ResponseEntity<>(new JSONObject().put("message", "Invalid Token").toString(),HttpStatus.UNAUTHORIZED);
         }
 
+        // Check if plan exit or not
         String keyToDelete = "plan_" + planId;
         if (!planService.checkIfKeyExists(keyToDelete)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new JSONObject().put("error", "plan not found!").toString());
         }
 
-        if (planService.deletePlan(keyToDelete)) {
-            return ResponseEntity.noContent().build();
+        String oldETag = planService.getETag(keyToDelete);
+        String receivedETag = headers.getFirst("If-None-Match");
+        if (receivedETag != null && receivedETag.equals(oldETag)) {
+            return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(oldETag)
+                    .body(new JSONObject().put("message", "plan not modified!").toString());
         }
-        return ResponseEntity.internalServerError().body(new JSONObject().put("error", "internal server error!").toString());
+
+
+        // Deleteing plan // From demo2
+        // if (planService.deletePlan(keyToDelete)) {
+        //     return ResponseEntity.noContent().build();
+        // }
+        Map<String, Object> plan = planService.getPlan(keyToDelete);
+        Map<String, String> message = new HashMap<>();
+        message.put("operation", "DELETE");
+        message.put("body",  new JSONObject(plan).toString());
+
+        System.out.println("Sending message: " + message);
+        template.convertAndSend(ECommerceApplication.queueName, message);
+
+        planService.deletePlan(keyToDelete);
+        return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+
+
+        // return ResponseEntity.internalServerError().body(new JSONObject().put("error", "internal server error!").toString()); // From demo2
     }
 
     @PatchMapping(value = "/{planId}")
-    public ResponseEntity<Object> updatePlan(@PathVariable String planId, @RequestBody String planUpdates, @RequestHeader("Authorization") String idToken) {
+    public ResponseEntity<Object> updatePlan(@PathVariable String planId, @RequestBody String planUpdates,@RequestHeader HttpHeaders headers, @RequestHeader("Authorization") String idToken) {
         // Check for authorization
         if (!authService.authorize(idToken.substring(7))) {
             return new ResponseEntity<>(new JSONObject().put("message", "Invalid Token").toString(), HttpStatus.UNAUTHORIZED);
@@ -134,6 +192,14 @@ public class PlanController {
         if (!planService.checkIfKeyExists(key)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new JSONObject().put("error", "plan not found!").toString());
         }
+
+        // Verify ETag
+        String oldETag = planService.getETag(key);
+        String receivedETag = headers.getFirst("If-None-Match");
+        if (receivedETag != null && receivedETag.equals(oldETag)) {
+            return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(oldETag)
+                    .body(new JSONObject().put("message", "plan not modified!").toString());
+        }
     
         JSONObject updatesJson = new JSONObject(planUpdates);
         try {
@@ -141,9 +207,22 @@ public class PlanController {
             jsonValidator.validateJson(updatesJson);
     
             // Apply the updates to the plan
-            String eTag = planService.updatePlan(key, updatesJson);
+            // String eTag = planService.updatePlan(key, updatesJson); // From demo2
+            String updatedEtag = planService.savePlan(key, updatesJson);
+
+            // Send message to queue for index update
+            Map<String, String> message = new HashMap<>();
+            message.put("operation", "SAVE");
+            message.put("body", planUpdates);
+
+            System.out.println("Sending message: " + message);
+            template.convertAndSend(ECommerceApplication.queueName, message);
+
+            return ResponseEntity.ok()
+                    .eTag(updatedEtag)
+                    .body(new JSONObject().put("message: ", "Plan updated successfully!!").toString());
             
-            return ResponseEntity.ok().eTag(eTag).body(new JSONObject().put("message", "plan updated successfully!").toString());
+            // return ResponseEntity.ok().eTag(eTag).body(new JSONObject().put("message", "plan updated successfully!").toString()); // From demo2
         } catch (ValidationException | IOException exception) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new JSONObject().put("error", exception.getMessage()).toString());
         }
