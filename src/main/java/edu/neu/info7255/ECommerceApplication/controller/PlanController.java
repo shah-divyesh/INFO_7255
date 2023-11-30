@@ -117,7 +117,8 @@ public class PlanController {
         }
 
         if (planService.deletePlan(keyToDelete)) {
-            return ResponseEntity.noContent().build();
+            // return ResponseEntity.noContent().build();
+            return new ResponseEntity<>(new JSONObject().put("message", "Plan Deleted").toString(),HttpStatus.OK);
         }
         return ResponseEntity.internalServerError().body(new JSONObject().put("error", "internal server error!").toString());
     }
